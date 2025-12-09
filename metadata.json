@@ -1,0 +1,5 @@
+{
+  "name": " AI Education Co-Pilot",
+  "description": "A comprehensive AI-powered learning assistant that transforms raw resources into a 3-year personalized curriculum, master notes, and quizzes using Google Gemini.",
+  "requestFramePermissions": []
+}
