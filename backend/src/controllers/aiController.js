@@ -1,16 +1,11 @@
-const { GoogleGenerativeAI } = require("@google/generative-ai");
+const { GoogleGenAI } = require("@google/genai");
 const fs = require('fs');
 const pdf = require('pdf-parse');
 
-// Initialize Gemini
-// Fallback to a check to prevent crash if key is missing during dev startup
+// Initialize Gemini with the new SDK
+// Use process.env.GEMINI_API_KEY or fallback to API_KEY
 const apiKey = process.env.GEMINI_API_KEY || process.env.API_KEY;
-const genAI = apiKey ? new GoogleGenerativeAI(apiKey) : null;
-
-const getModel = () => {
-  if (!genAI) throw new Error("API Key not configured");
-  return genAI.getGenerativeModel({ model: "gemini-pro" });
-}
+const ai = apiKey ? new GoogleGenAI({ apiKey }) : null;
 
 // Helper to extract text
 async function extractText(filePath, mimeType) {
@@ -55,9 +50,9 @@ function cleanJSONArray(text) {
 
 exports.processFiles = async (req, res) => {
   try {
+    if (!ai) throw new Error("API Key not configured");
     const files = req.files || [];
     const results = [];
-    const model = getModel();
 
     for (const file of files) {
       const textContent = await extractText(file.path, file.mimetype);
@@ -79,10 +74,13 @@ exports.processFiles = async (req, res) => {
       `;
 
       try {
-        const result = await model.generateContent(prompt);
-        const response = await result.response;
-        const text = response.text();
-        const metadata = cleanJSON(text);
+        const response = await ai.models.generateContent({
+          model: 'gemini-2.5-flash',
+          contents: prompt,
+          config: { responseMimeType: 'application/json' }
+        });
+        
+        const metadata = cleanJSON(response.text);
 
         results.push({
           id: file.filename,
@@ -106,19 +104,21 @@ exports.processFiles = async (req, res) => {
 };
 
 exports.processUrl = async (req, res) => {
-  const { url } = req.body;
-  const prompt = `
-    Analyze this URL: ${url}.
-    Infer educational content, topics, and metadata based on the URL structure.
-    Return strict JSON: { "summary": "", "topics": [], "difficulty": 5, "credibilityScore": 80, "type": "url", "warnings": [] }
-  `;
-
   try {
-    const model = getModel();
-    const result = await model.generateContent(prompt);
-    const response = await result.response;
-    const text = response.text();
-    const metadata = cleanJSON(text);
+    if (!ai) throw new Error("API Key not configured");
+    const { url } = req.body;
+    const prompt = `
+      Analyze this URL: ${url}.
+      Infer educational content, topics, and metadata based on the URL structure.
+      Return strict JSON: { "summary": "", "topics": [], "difficulty": 5, "credibilityScore": 80, "type": "url", "warnings": [] }
+    `;
+
+    const response = await ai.models.generateContent({
+      model: 'gemini-2.5-flash',
+      contents: prompt,
+      config: { responseMimeType: 'application/json' }
+    });
+    const metadata = cleanJSON(response.text);
     
     res.json({
       resource: {
@@ -137,75 +137,80 @@ exports.processUrl = async (req, res) => {
 };
 
 exports.harmonizeCurriculum = async (req, res) => {
-  const { resources } = req.body;
-  const summaries = resources.map(r => 
-    `ID: ${r.id}, Name: ${r.name}, Topics: ${r.metadata?.topics?.join(', ')}`
-  ).join('\n');
-
-  const prompt = `
-    Act as a Curriculum Architect. Create a dependency tree of "Curriculum Nodes".
-    Input:
-    ${summaries}
-
-    Output strict JSON Array:
-    [{ "id": "uuid", "title": "string", "description": "string", "resources": ["resource_id"], "prerequisites": ["node_id"], "duration": "string" }]
-  `;
-
   try {
-    const model = getModel();
-    const result = await model.generateContent(prompt);
-    const response = await result.response;
-    const text = response.text();
-    res.json(cleanJSONArray(text));
+    if (!ai) throw new Error("API Key not configured");
+    const { resources } = req.body;
+    const summaries = resources.map(r => 
+      `ID: ${r.id}, Name: ${r.name}, Topics: ${r.metadata?.topics?.join(', ')}`
+    ).join('\n');
+
+    const prompt = `
+      Act as a Curriculum Architect. Create a dependency tree of "Curriculum Nodes".
+      Input:
+      ${summaries}
+
+      Output strict JSON Array:
+      [{ "id": "uuid", "title": "string", "description": "string", "resources": ["resource_id"], "prerequisites": ["node_id"], "duration": "string" }]
+    `;
+
+    const response = await ai.models.generateContent({
+      model: 'gemini-2.5-flash',
+      contents: prompt,
+      config: { responseMimeType: 'application/json' }
+    });
+    res.json(cleanJSONArray(response.text));
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
 };
 
 exports.generateStudyPlan = async (req, res) => {
-  const { nodes } = req.body;
-  const prompt = `
-    Create a 3-Year Study Plan for these topics: ${JSON.stringify(nodes)}.
-    Output strictly JSON matching this schema:
-    { "years": [{ "year": 1, "focus": "", "quarters": [{ "quarter": 1, "focus": "", "months": [{ "month": 1, "topics": [ { "id": "node_id", "title": "" } ] }] }] }] }
-  `;
-
   try {
-    const model = getModel();
-    const result = await model.generateContent(prompt);
-    const response = await result.response;
-    const text = response.text();
-    res.json(cleanJSON(text));
+    if (!ai) throw new Error("API Key not configured");
+    const { nodes } = req.body;
+    const prompt = `
+      Create a 3-Year Study Plan for these topics: ${JSON.stringify(nodes)}.
+      Output strictly JSON matching this schema:
+      { "years": [{ "year": 1, "focus": "", "quarters": [{ "quarter": 1, "focus": "", "months": [{ "month": 1, "topics": [ { "id": "node_id", "title": "" } ] }] }] }] }
+    `;
+
+    const response = await ai.models.generateContent({
+      model: 'gemini-3-pro-preview',
+      contents: prompt,
+      config: { responseMimeType: 'application/json' }
+    });
+    res.json(cleanJSON(response.text));
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
 };
 
 exports.generateMasterNotes = async (req, res) => {
-  const { topic, resources } = req.body;
-  const context = resources
-    .filter(r => topic.resources && topic.resources.includes(r.id))
-    .map(r => `Source (${r.name}):\n${r.content.substring(0, 4000)}`)
-    .join('\n\n');
-
-  const prompt = `
-    Write a comprehensive "Master Note" (Markdown) for topic: "${topic.title}".
-    Use these sources. Include Overview, Deep Dive, and Key Takeaways.
-    
-    Sources:
-    ${context}
-  `;
-
   try {
-    const model = getModel();
-    const result = await model.generateContent(prompt);
-    const response = await result.response;
-    const text = response.text();
+    if (!ai) throw new Error("API Key not configured");
+    const { topic, resources } = req.body;
+    const context = resources
+      .filter(r => topic.resources && topic.resources.includes(r.id))
+      .map(r => `Source (${r.name}):\n${r.content.substring(0, 4000)}`)
+      .join('\n\n');
+
+    const prompt = `
+      Write a comprehensive "Master Note" (Markdown) for topic: "${topic.title}".
+      Use these sources. Include Overview, Deep Dive, and Key Takeaways.
+      
+      Sources:
+      ${context}
+    `;
+
+    const response = await ai.models.generateContent({
+      model: 'gemini-3-pro-preview',
+      contents: prompt
+    });
 
     res.json({
       topicId: topic.id,
       title: topic.title,
-      contentMarkdown: text,
+      contentMarkdown: response.text,
       generatedAt: new Date().toISOString(),
       references: resources.map(r => ({ resourceId: r.id, snippet: r.name }))
     });
@@ -215,17 +220,19 @@ exports.generateMasterNotes = async (req, res) => {
 };
 
 exports.generateQuiz = async (req, res) => {
-  const { topic } = req.body;
-  const prompt = `Generate 5 multiple choice questions for "${topic}". 
-  Return strict JSON Array:
-  [{ "id": "1", "question": "", "options": ["A", "B", "C", "D"], "correctIndex": 0, "explanation": "" }]`;
-
   try {
-    const model = getModel();
-    const result = await model.generateContent(prompt);
-    const response = await result.response;
-    const text = response.text();
-    res.json(cleanJSONArray(text));
+    if (!ai) throw new Error("API Key not configured");
+    const { topic } = req.body;
+    const prompt = `Generate 5 multiple choice questions for "${topic}". 
+    Return strict JSON Array:
+    [{ "id": "1", "question": "", "options": ["A", "B", "C", "D"], "correctIndex": 0, "explanation": "" }]`;
+
+    const response = await ai.models.generateContent({
+      model: 'gemini-2.5-flash',
+      contents: prompt,
+      config: { responseMimeType: 'application/json' }
+    });
+    res.json(cleanJSONArray(response.text));
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
