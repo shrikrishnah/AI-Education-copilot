@@ -1,19 +1,19 @@
+/// <reference types="vite/client" />
 import axios from 'axios';
-import { Resource, CurriculumNode, StudyPlan } from '../types';
+import { Resource, CurriculumNode, StudyPlan, MasterNote, QuizQuestion } from '../types';
 
-const API_URL = 'http://localhost:5000/api';
+// In development, Vite proxy handles the base URL. In production, use env var.
+const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
 
 const client = axios.create({
-  baseURL: API_URL,
+  baseURL: API_BASE,
   headers: {
     'Content-Type': 'application/json',
   },
 });
 
 export const api = {
-  checkHealth: async () => {
-    return client.get('/health');
-  },
+  checkHealth: async () => client.get('/../health'),
 
   uploadFiles: async (files: File[]) => {
     const formData = new FormData();
@@ -40,12 +40,12 @@ export const api = {
   },
 
   generateNote: async (topic: CurriculumNode, resources: Resource[]) => {
-    const response = await client.post('/notes', { topic, resources });
+    const response = await client.post<MasterNote>('/notes', { topic, resources });
     return response.data;
   },
 
   generateQuiz: async (topicTitle: string) => {
-    const response = await client.post('/quiz', { topic: topicTitle });
+    const response = await client.post<QuizQuestion[]>('/quiz', { topic: topicTitle });
     return response.data;
   }
 };

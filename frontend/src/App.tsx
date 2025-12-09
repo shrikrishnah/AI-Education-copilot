@@ -5,16 +5,16 @@ import { Upload } from './pages/Upload';
 import { Planner } from './pages/Planner';
 import { Notes } from './pages/Notes';
 import { Quiz } from './pages/Quiz';
-import { AppState, Resource, CurriculumNode, StudyPlan, MasterNote } from './types';
+import { AppState } from './types';
 import { api } from './services/api';
 
-// Mock Router
 type View = 'dashboard' | 'upload' | 'planner' | 'notes' | 'quiz';
 
 function App() {
   const [view, setView] = useState<View>('dashboard');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   
-  // Central State Store
   const [state, setState] = useState<AppState>({
     resources: [],
     curriculum: [],
@@ -23,15 +23,10 @@ function App() {
     processingLog: []
   });
 
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
   useEffect(() => {
-    // Check backend connection on load
-    api.checkHealth().catch(() => setError("Backend not connected on port 5000"));
+    api.checkHealth()
+       .catch(() => console.warn('Backend not detected on default port'));
   }, []);
-
-  // --- ACTIONS ---
 
   const addResources = async (files: File[]) => {
     setLoading(true);
@@ -41,12 +36,11 @@ function App() {
       setState(prev => ({
         ...prev,
         resources: [...prev.resources, ...processed],
-        processingLog: [...prev.processingLog, `Processed ${processed.length} files.`]
+        processingLog: [...prev.processingLog, `Uploaded ${files.length} files.`]
       }));
       setView('dashboard');
-    } catch (err) {
-      setError("Failed to upload files. Ensure backend is running.");
-      console.error(err);
+    } catch (err: any) {
+      setError(err.message || "Upload failed");
     } finally {
       setLoading(false);
     }
@@ -60,38 +54,26 @@ function App() {
       setState(prev => ({
         ...prev,
         resources: [...prev.resources, resource],
-        processingLog: [...prev.processingLog, `Processed link: ${url}`]
+        processingLog: [...prev.processingLog, `Added link: ${url}`]
       }));
       setView('dashboard');
-    } catch (err) {
-      setError("Failed to process URL.");
-      console.error(err);
+    } catch (err: any) {
+      setError(err.message || "URL processing failed");
     } finally {
       setLoading(false);
     }
   };
 
   const generateCurriculum = async () => {
-    if (state.resources.length === 0) {
-      setError("Please add resources first.");
-      return;
-    }
+    if (state.resources.length === 0) return setError("Add resources first");
     setLoading(true);
-    setError(null);
     try {
       const nodes = await api.harmonizeCurriculum(state.resources);
       const plan = await api.generatePlan(nodes);
-      
-      setState(prev => ({
-        ...prev,
-        curriculum: nodes,
-        studyPlan: plan,
-        processingLog: [...prev.processingLog, 'Curriculum and Plan generated.']
-      }));
+      setState(prev => ({ ...prev, curriculum: nodes, studyPlan: plan }));
       setView('planner');
-    } catch (err) {
-      setError("Failed to generate plan.");
-      console.error(err);
+    } catch (err: any) {
+      setError(err.message || "Plan generation failed");
     } finally {
       setLoading(false);
     }
@@ -100,7 +82,6 @@ function App() {
   const generateNote = async (topicId: string) => {
     const topic = state.curriculum.find(n => n.id === topicId);
     if (!topic) return;
-    
     setLoading(true);
     try {
       const note = await api.generateNote(topic, state.resources);
@@ -108,15 +89,12 @@ function App() {
         ...prev,
         masterNotes: [...prev.masterNotes.filter(n => n.topicId !== topicId), note]
       }));
-    } catch (err) {
-      console.error(err);
-      setError("Failed to generate notes.");
+    } catch (err: any) {
+      setError(err.message || "Note generation failed");
     } finally {
       setLoading(false);
     }
   };
-
-  // --- RENDER ---
 
   const renderView = () => {
     switch(view) {
@@ -132,7 +110,7 @@ function App() {
   return (
     <Layout currentView={view} onViewChange={setView}>
       {error && (
-        <div className="bg-red-500/10 border border-red-500/50 text-red-200 px-4 py-2 text-center text-sm">
+        <div className="bg-red-900/50 border border-red-500 text-red-200 px-4 py-2 rounded mb-4 text-center">
           {error}
         </div>
       )}

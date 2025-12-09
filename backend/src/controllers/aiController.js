@@ -1,72 +1,75 @@
-require("dotenv").config();
-const { GoogleGenerativeAI } = require("@google/generative-ai");
-const fs = require("fs");
-const pdf = require("pdf-parse");
+import { GoogleGenAI } from "@google/genai";
+import fs from 'fs';
+import pdf from 'pdf-parse';
 
-// IMPORTANT — Use correct class name AND environment variable
-const ai = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
+// --- Helpers ---
 
-// Helper to extract text from files
 async function extractText(filePath, mimeType) {
-  if (mimeType === 'application/pdf') {
-    const dataBuffer = fs.readFileSync(filePath);
-    const data = await pdf(dataBuffer);
-    return data.text;
-  } else {
-    // Assume text/plain, markdown, etc.
-    return fs.readFileSync(filePath, 'utf8');
+  try {
+    if (mimeType === 'application/pdf') {
+      const dataBuffer = fs.readFileSync(filePath);
+      const data = await pdf(dataBuffer);
+      return data.text;
+    } else {
+      return fs.readFileSync(filePath, 'utf8');
+    }
+  } catch (error) {
+    console.error("Extraction error:", error);
+    return "";
   }
 }
 
-// --- AGENT 1: Ingest & Analyze ---
-exports.processFiles = async (req, res) => {
+// --- Controllers ---
+
+export const processFiles = async (req, res) => {
   try {
-    const files = req.files;
+    const files = req.files || [];
     const results = [];
 
     for (const file of files) {
+      const textContent = await extractText(file.path, file.mimetype);
+      
+      const prompt = `
+        Analyze this educational resource.
+        Filename: ${file.originalname}
+        Content Snippet: ${textContent.slice(0, 8000)}...
+
+        Return JSON:
+        {
+          "summary": "string (max 100 words)",
+          "topics": ["string"],
+          "difficulty": number (1-10),
+          "credibilityScore": number (1-100),
+          "type": "string",
+          "warnings": ["string"]
+        }
+      `;
+
       try {
-        const textContent = await extractText(file.path, file.mimetype);
-        
-        // Analyze with Gemini
-        const prompt = `
-          Analyze this educational resource.
-          Filename: ${file.originalname}
-          Content Snippet: ${textContent.slice(0, 10000)}...
-
-          Return a JSON object with:
-          {
-            "summary": "string (max 100 words)",
-            "topics": ["string"],
-            "difficulty": number (1-10),
-            "credibilityScore": number (1-100),
-            "type": "string"
-          }
-        `;
-
         const response = await ai.models.generateContent({
           model: 'gemini-2.5-flash',
           contents: prompt,
           config: { responseMimeType: 'application/json' }
         });
-
+        
         const metadata = JSON.parse(response.text);
-
+        
         results.push({
           id: file.filename,
           name: file.originalname,
           type: file.mimetype === 'application/pdf' ? 'pdf' : 'text',
-          content: textContent, // In production, store path or vector embedding
+          content: textContent, // Note: In production, store this in a vector DB or blob storage
           metadata,
           uploadedAt: new Date().toISOString()
         });
-
-        // Cleanup
-        // fs.unlinkSync(file.path); 
       } catch (err) {
-        console.error(`Error processing ${file.originalname}:`, err);
-        results.push({ id: file.filename, name: file.originalname, status: 'error' });
+        console.error(`AI Error for ${file.originalname}:`, err);
+        results.push({ id: file.filename, name: file.originalname, status: 'error', error: err.message });
+      } finally {
+        // Cleanup temp file
+        try { fs.unlinkSync(file.path); } catch (e) {}
       }
     }
 
@@ -76,26 +79,15 @@ exports.processFiles = async (req, res) => {
   }
 };
 
-exports.processUrl = async (req, res) => {
-  try {
-    const { url } = req.body;
-    
-    // In a real app, use Puppeteer to scrape. 
-    // Here we assume the user provides a URL and we ask Gemini to infer or use its own knowledge.
-    const prompt = `
-      The user provided this URL for learning: ${url}.
-      Infer the educational content, summary, and topics based on the URL structure and common knowledge.
-      
-      Return a JSON object with:
-      {
-        "summary": "string",
-        "topics": ["string"],
-        "difficulty": 5,
-        "credibilityScore": 80,
-        "type": "url"
-      }
-    `;
+export const processUrl = async (req, res) => {
+  const { url } = req.body;
+  const prompt = `
+    Analyze this URL: ${url}.
+    Infer educational content, topics, and metadata.
+    Return JSON: { "summary": "", "topics": [], "difficulty": 5, "credibilityScore": 80, "type": "url", "warnings": [] }
+  `;
 
+  try {
     const response = await ai.models.generateContent({
       model: 'gemini-2.5-flash',
       contents: prompt,
@@ -103,117 +95,90 @@ exports.processUrl = async (req, res) => {
     });
 
     const metadata = JSON.parse(response.text);
-
+    
     res.json({
       resource: {
         id: Date.now().toString(),
         name: url,
         type: 'url',
-        url: url,
+        url,
         content: `External Link: ${url}`,
         metadata,
         uploadedAt: new Date().toISOString()
       }
     });
-
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
 };
 
-// --- AGENT 2: Harmonize ---
-exports.harmonizeCurriculum = async (req, res) => {
+export const harmonizeCurriculum = async (req, res) => {
+  const { resources } = req.body;
+  if (!resources?.length) return res.status(400).json({ error: "No resources provided" });
+
+  const summaries = resources.map(r => 
+    `ID: ${r.id}, Name: ${r.name}, Topics: ${r.metadata?.topics?.join(', ')}`
+  ).join('\n');
+
+  const prompt = `
+    Act as a Curriculum Architect. Create a dependency tree of "Curriculum Nodes" covering these resources.
+    Input:
+    ${summaries}
+
+    Output JSON Array:
+    [{ "id": "uuid", "title": "string", "description": "string", "resources": ["resource_id"], "prerequisites": ["node_id"], "duration": "string" }]
+  `;
+
   try {
-    const { resources } = req.body;
-    const summaries = resources.map(r => 
-      `ID: ${r.id}, Name: ${r.name}, Topics: ${r.metadata?.topics?.join(', ')}`
-    ).join('\n');
-
-    const prompt = `
-      Act as a Curriculum Architect. 
-      Resources:
-      ${summaries}
-
-      Create a logical dependency tree of "Curriculum Nodes".
-      Output JSON:
-      [
-        {
-          "id": "string",
-          "title": "string",
-          "description": "string",
-          "resources": ["resource_id_1"],
-          "prerequisites": ["node_id_previous"] 
-        }
-      ]
-    `;
-
     const response = await ai.models.generateContent({
-      model: 'gemini-3-pro-preview', // Stronger reasoning model
+      model: 'gemini-3-pro-preview',
       contents: prompt,
       config: { responseMimeType: 'application/json' }
     });
-
     res.json(JSON.parse(response.text));
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
 };
 
-// --- AGENT 3: Planner ---
-exports.generateStudyPlan = async (req, res) => {
-  try {
-    const { nodes } = req.body;
-    
-    const prompt = `
-      Create a 3-Year Study Plan based on these topics: ${JSON.stringify(nodes)}.
-      Output strictly JSON:
-      {
-        "years": [
-          {
-            "year": 1,
-            "focus": "string",
-            "quarters": [
-               { "quarter": 1, "focus": "string", "months": [ { "month": 1, "topics": [ { "id": "node_id", "title": "string" } ] } ] }
-            ]
-          }
-        ]
-      }
-    `;
+export const generateStudyPlan = async (req, res) => {
+  const { nodes } = req.body;
+  const prompt = `
+    Create a 3-Year Study Plan for these topics: ${JSON.stringify(nodes)}.
+    Output strictly JSON matching this schema:
+    { "years": [{ "year": 1, "focus": "", "quarters": [{ "quarter": 1, "focus": "", "months": [{ "month": 1, "topics": [ { "id": "node_id", "title": "" } ] }] }] }] }
+  `;
 
+  try {
     const response = await ai.models.generateContent({
       model: 'gemini-2.5-flash',
       contents: prompt,
       config: { responseMimeType: 'application/json' }
     });
-
     res.json(JSON.parse(response.text));
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
 };
 
-// --- AGENT 4: Master Notes ---
-exports.generateMasterNotes = async (req, res) => {
-  try {
-    const { topic, resources } = req.body;
+export const generateMasterNotes = async (req, res) => {
+  const { topic, resources } = req.body;
+  const context = resources
+    .filter(r => topic.resources.includes(r.id))
+    .map(r => `Source (${r.name}):\n${r.content.substring(0, 4000)}`)
+    .join('\n\n');
+
+  const prompt = `
+    Write a comprehensive "Master Note" (Markdown) for topic: "${topic.title}".
+    Use these sources. Include Overview, Deep Dive, and Key Takeaways.
     
-    // Filter relevant content
-    const context = resources
-      .filter(r => topic.resources.includes(r.id))
-      .map(r => `Source (${r.name}):\n${r.content.substring(0, 3000)}`)
-      .join('\n\n');
+    Sources:
+    ${context}
+  `;
 
-    const prompt = `
-      Write a comprehensive "Master Note" for the topic: "${topic.title}".
-      Use the provided sources. Format in Markdown.
-      Include: Overview, Deep Dive, Examples, References.
-      
-      Sources:
-      ${context || "No specific source text, use general knowledge."}
-    `;
-
+  try {
     const response = await ai.models.generateContent({
-      model: 'gemini-3-pro-preview', // High quality writing
+      model: 'gemini-3-pro-preview',
       contents: prompt
     });
 
@@ -224,18 +189,16 @@ exports.generateMasterNotes = async (req, res) => {
       generatedAt: new Date().toISOString(),
       references: resources.map(r => ({ resourceId: r.id, snippet: r.name }))
     });
-
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
 };
 
-// --- AGENT 5: Quiz ---
-exports.generateQuiz = async (req, res) => {
+export const generateQuiz = async (req, res) => {
+  const { topic } = req.body;
+  const prompt = `Generate 5 multiple choice questions for "${topic}". JSON Array.`;
+
   try {
-    const { topic } = req.body;
-    const prompt = `Generate 5 multiple choice questions about "${topic}". JSON format.`;
-    
     const response = await ai.models.generateContent({
       model: 'gemini-2.5-flash',
       contents: prompt,
@@ -256,7 +219,6 @@ exports.generateQuiz = async (req, res) => {
         }
       }
     });
-
     res.json(JSON.parse(response.text));
   } catch (error) {
     res.status(500).json({ error: error.message });
