@@ -1,11 +1,12 @@
-import { GoogleGenAI } from "@google/genai";
-import fs from 'fs';
-import pdf from 'pdf-parse';
+const { GoogleGenerativeAI } = require("@google/generative-ai");
+const fs = require('fs');
+const pdf = require('pdf-parse');
 
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+// Initialize Gemini with v0.2.1 syntax
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || process.env.API_KEY);
+const model = genAI.getGenerativeModel({ model: "gemini-pro" });
 
-// --- Helpers ---
-
+// Helper to extract text
 async function extractText(filePath, mimeType) {
   try {
     if (mimeType === 'application/pdf') {
@@ -21,9 +22,30 @@ async function extractText(filePath, mimeType) {
   }
 }
 
-// --- Controllers ---
+// Helper to clean JSON output from model
+function cleanJSON(text) {
+  try {
+    const start = text.indexOf('{');
+    const end = text.lastIndexOf('}');
+    if (start === -1 || end === -1) return {};
+    return JSON.parse(text.substring(start, end + 1));
+  } catch (e) {
+    return {};
+  }
+}
 
-export const processFiles = async (req, res) => {
+function cleanJSONArray(text) {
+  try {
+    const start = text.indexOf('[');
+    const end = text.lastIndexOf(']');
+    if (start === -1 || end === -1) return [];
+    return JSON.parse(text.substring(start, end + 1));
+  } catch (e) {
+    return [];
+  }
+}
+
+exports.processFiles = async (req, res) => {
   try {
     const files = req.files || [];
     const results = [];
@@ -36,7 +58,7 @@ export const processFiles = async (req, res) => {
         Filename: ${file.originalname}
         Content Snippet: ${textContent.slice(0, 8000)}...
 
-        Return JSON:
+        Return strict JSON (no markdown) with:
         {
           "summary": "string (max 100 words)",
           "topics": ["string"],
@@ -48,19 +70,16 @@ export const processFiles = async (req, res) => {
       `;
 
       try {
-        const response = await ai.models.generateContent({
-          model: 'gemini-2.5-flash',
-          contents: prompt,
-          config: { responseMimeType: 'application/json' }
-        });
-        
-        const metadata = JSON.parse(response.text);
-        
+        const result = await model.generateContent(prompt);
+        const response = await result.response;
+        const text = response.text();
+        const metadata = cleanJSON(text);
+
         results.push({
           id: file.filename,
           name: file.originalname,
           type: file.mimetype === 'application/pdf' ? 'pdf' : 'text',
-          content: textContent, // Note: In production, store this in a vector DB or blob storage
+          content: textContent,
           metadata,
           uploadedAt: new Date().toISOString()
         });
@@ -68,33 +87,28 @@ export const processFiles = async (req, res) => {
         console.error(`AI Error for ${file.originalname}:`, err);
         results.push({ id: file.filename, name: file.originalname, status: 'error', error: err.message });
       } finally {
-        // Cleanup temp file
         try { fs.unlinkSync(file.path); } catch (e) {}
       }
     }
-
     res.json({ resources: results });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
 };
 
-export const processUrl = async (req, res) => {
+exports.processUrl = async (req, res) => {
   const { url } = req.body;
   const prompt = `
     Analyze this URL: ${url}.
-    Infer educational content, topics, and metadata.
-    Return JSON: { "summary": "", "topics": [], "difficulty": 5, "credibilityScore": 80, "type": "url", "warnings": [] }
+    Infer educational content, topics, and metadata based on the URL structure.
+    Return strict JSON: { "summary": "", "topics": [], "difficulty": 5, "credibilityScore": 80, "type": "url", "warnings": [] }
   `;
 
   try {
-    const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash',
-      contents: prompt,
-      config: { responseMimeType: 'application/json' }
-    });
-
-    const metadata = JSON.parse(response.text);
+    const result = await model.generateContent(prompt);
+    const response = await result.response;
+    const text = response.text();
+    const metadata = cleanJSON(text);
     
     res.json({
       resource: {
@@ -112,36 +126,32 @@ export const processUrl = async (req, res) => {
   }
 };
 
-export const harmonizeCurriculum = async (req, res) => {
+exports.harmonizeCurriculum = async (req, res) => {
   const { resources } = req.body;
-  if (!resources?.length) return res.status(400).json({ error: "No resources provided" });
-
   const summaries = resources.map(r => 
     `ID: ${r.id}, Name: ${r.name}, Topics: ${r.metadata?.topics?.join(', ')}`
   ).join('\n');
 
   const prompt = `
-    Act as a Curriculum Architect. Create a dependency tree of "Curriculum Nodes" covering these resources.
+    Act as a Curriculum Architect. Create a dependency tree of "Curriculum Nodes".
     Input:
     ${summaries}
 
-    Output JSON Array:
+    Output strict JSON Array:
     [{ "id": "uuid", "title": "string", "description": "string", "resources": ["resource_id"], "prerequisites": ["node_id"], "duration": "string" }]
   `;
 
   try {
-    const response = await ai.models.generateContent({
-      model: 'gemini-3-pro-preview',
-      contents: prompt,
-      config: { responseMimeType: 'application/json' }
-    });
-    res.json(JSON.parse(response.text));
+    const result = await model.generateContent(prompt);
+    const response = await result.response;
+    const text = response.text();
+    res.json(cleanJSONArray(text));
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
 };
 
-export const generateStudyPlan = async (req, res) => {
+exports.generateStudyPlan = async (req, res) => {
   const { nodes } = req.body;
   const prompt = `
     Create a 3-Year Study Plan for these topics: ${JSON.stringify(nodes)}.
@@ -150,21 +160,19 @@ export const generateStudyPlan = async (req, res) => {
   `;
 
   try {
-    const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash',
-      contents: prompt,
-      config: { responseMimeType: 'application/json' }
-    });
-    res.json(JSON.parse(response.text));
+    const result = await model.generateContent(prompt);
+    const response = await result.response;
+    const text = response.text();
+    res.json(cleanJSON(text));
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
 };
 
-export const generateMasterNotes = async (req, res) => {
+exports.generateMasterNotes = async (req, res) => {
   const { topic, resources } = req.body;
   const context = resources
-    .filter(r => topic.resources.includes(r.id))
+    .filter(r => topic.resources && topic.resources.includes(r.id))
     .map(r => `Source (${r.name}):\n${r.content.substring(0, 4000)}`)
     .join('\n\n');
 
@@ -177,15 +185,14 @@ export const generateMasterNotes = async (req, res) => {
   `;
 
   try {
-    const response = await ai.models.generateContent({
-      model: 'gemini-3-pro-preview',
-      contents: prompt
-    });
+    const result = await model.generateContent(prompt);
+    const response = await result.response;
+    const text = response.text();
 
     res.json({
       topicId: topic.id,
       title: topic.title,
-      contentMarkdown: response.text,
+      contentMarkdown: text,
       generatedAt: new Date().toISOString(),
       references: resources.map(r => ({ resourceId: r.id, snippet: r.name }))
     });
@@ -194,32 +201,17 @@ export const generateMasterNotes = async (req, res) => {
   }
 };
 
-export const generateQuiz = async (req, res) => {
+exports.generateQuiz = async (req, res) => {
   const { topic } = req.body;
-  const prompt = `Generate 5 multiple choice questions for "${topic}". JSON Array.`;
+  const prompt = `Generate 5 multiple choice questions for "${topic}". 
+  Return strict JSON Array:
+  [{ "id": "1", "question": "", "options": ["A", "B", "C", "D"], "correctIndex": 0, "explanation": "" }]`;
 
   try {
-    const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash',
-      contents: prompt,
-      config: {
-        responseMimeType: 'application/json',
-        responseSchema: {
-          type: "ARRAY",
-          items: {
-            type: "OBJECT",
-            properties: {
-              id: { type: "STRING" },
-              question: { type: "STRING" },
-              options: { type: "ARRAY", items: { type: "STRING" } },
-              correctIndex: { type: "INTEGER" },
-              explanation: { type: "STRING" }
-            }
-          }
-        }
-      }
-    });
-    res.json(JSON.parse(response.text));
+    const result = await model.generateContent(prompt);
+    const response = await result.response;
+    const text = response.text();
+    res.json(cleanJSONArray(text));
   } catch (error) {
     res.status(500).json({ error: error.message });
   }

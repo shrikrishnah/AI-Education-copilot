@@ -25,7 +25,7 @@ function App() {
 
   useEffect(() => {
     api.checkHealth()
-       .catch(() => console.warn('Backend not detected on default port'));
+       .catch(() => console.warn('Backend not detected'));
   }, []);
 
   const addResources = async (files: File[]) => {

@@ -14,7 +14,6 @@ export interface ResourceMetadata {
   topics: string[];
   difficulty: number;
   credibilityScore: number;
-  yearSurvivalScore?: number;
   warnings?: string[];
   type: string;
 }
@@ -26,7 +25,6 @@ export interface CurriculumNode {
   duration?: string;
   prerequisites: string[];
   resources: string[];
-  objectives?: string[];
 }
 
 export interface StudyPlan {

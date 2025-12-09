@@ -2,7 +2,6 @@
 import axios from 'axios';
 import { Resource, CurriculumNode, StudyPlan, MasterNote, QuizQuestion } from '../types';
 
-// In development, Vite proxy handles the base URL. In production, use env var.
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
 
 const client = axios.create({
@@ -13,7 +12,7 @@ const client = axios.create({
 });
 
 export const api = {
-  checkHealth: async () => client.get('/../health'),
+  checkHealth: async () => client.get('/health'),
 
   uploadFiles: async (files: File[]) => {
     const formData = new FormData();
