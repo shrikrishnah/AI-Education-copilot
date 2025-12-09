@@ -1,8 +1,11 @@
+require("dotenv").config();
 const { GoogleGenerativeAI } = require("@google/generative-ai");
-const fs = require('fs');
-const pdf = require('pdf-parse');
+const fs = require("fs");
+const pdf = require("pdf-parse");
 
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+// IMPORTANT — Use correct class name AND environment variable
+const ai = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+
 
 // Helper to extract text from files
 async function extractText(filePath, mimeType) {
