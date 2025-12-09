@@ -22,10 +22,13 @@ if (!fs.existsSync(uploadsDir)) {
 }
 
 // Routes
+// This mounts the router at /api. 
+// So 'router.post('/upload')' becomes 'POST /api/upload'
 app.use('/api', apiRoutes);
 
+// Root Health Check
 app.get('/health', (req, res) => {
-  res.json({ status: 'healthy', timestamp: new Date().toISOString() });
+  res.json({ status: 'Server healthy', timestamp: new Date().toISOString() });
 });
 
 module.exports = app;

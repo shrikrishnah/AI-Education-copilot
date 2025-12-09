@@ -2,7 +2,9 @@
 import axios from 'axios';
 import { Resource, CurriculumNode, StudyPlan, MasterNote, QuizQuestion } from '../types';
 
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
+// Use relative path '/api' to leverage Vite's proxy in development.
+// In production, this can be replaced by the full URL env var.
+const API_BASE = import.meta.env.VITE_API_URL || '/api';
 
 const client = axios.create({
   baseURL: API_BASE,

@@ -2,9 +2,15 @@ const { GoogleGenerativeAI } = require("@google/generative-ai");
 const fs = require('fs');
 const pdf = require('pdf-parse');
 
-// Initialize Gemini with v0.2.1 syntax
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || process.env.API_KEY);
-const model = genAI.getGenerativeModel({ model: "gemini-pro" });
+// Initialize Gemini
+// Fallback to a check to prevent crash if key is missing during dev startup
+const apiKey = process.env.GEMINI_API_KEY || process.env.API_KEY;
+const genAI = apiKey ? new GoogleGenerativeAI(apiKey) : null;
+
+const getModel = () => {
+  if (!genAI) throw new Error("API Key not configured");
+  return genAI.getGenerativeModel({ model: "gemini-pro" });
+}
 
 // Helper to extract text
 async function extractText(filePath, mimeType) {
@@ -22,7 +28,7 @@ async function extractText(filePath, mimeType) {
   }
 }
 
-// Helper to clean JSON output from model
+// Helpers to clean JSON output from model
 function cleanJSON(text) {
   try {
     const start = text.indexOf('{');
@@ -30,6 +36,7 @@ function cleanJSON(text) {
     if (start === -1 || end === -1) return {};
     return JSON.parse(text.substring(start, end + 1));
   } catch (e) {
+    console.error("JSON Parse Error", e);
     return {};
   }
 }
@@ -41,6 +48,7 @@ function cleanJSONArray(text) {
     if (start === -1 || end === -1) return [];
     return JSON.parse(text.substring(start, end + 1));
   } catch (e) {
+    console.error("JSON Array Parse Error", e);
     return [];
   }
 }
@@ -49,6 +57,7 @@ exports.processFiles = async (req, res) => {
   try {
     const files = req.files || [];
     const results = [];
+    const model = getModel();
 
     for (const file of files) {
       const textContent = await extractText(file.path, file.mimetype);
@@ -105,6 +114,7 @@ exports.processUrl = async (req, res) => {
   `;
 
   try {
+    const model = getModel();
     const result = await model.generateContent(prompt);
     const response = await result.response;
     const text = response.text();
@@ -142,6 +152,7 @@ exports.harmonizeCurriculum = async (req, res) => {
   `;
 
   try {
+    const model = getModel();
     const result = await model.generateContent(prompt);
     const response = await result.response;
     const text = response.text();
@@ -160,6 +171,7 @@ exports.generateStudyPlan = async (req, res) => {
   `;
 
   try {
+    const model = getModel();
     const result = await model.generateContent(prompt);
     const response = await result.response;
     const text = response.text();
@@ -185,6 +197,7 @@ exports.generateMasterNotes = async (req, res) => {
   `;
 
   try {
+    const model = getModel();
     const result = await model.generateContent(prompt);
     const response = await result.response;
     const text = response.text();
@@ -208,6 +221,7 @@ exports.generateQuiz = async (req, res) => {
   [{ "id": "1", "question": "", "options": ["A", "B", "C", "D"], "correctIndex": 0, "explanation": "" }]`;
 
   try {
+    const model = getModel();
     const result = await model.generateContent(prompt);
     const response = await result.response;
     const text = response.text();
