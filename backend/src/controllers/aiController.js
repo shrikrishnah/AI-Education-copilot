@@ -1,318 +1,253 @@
-const { GoogleGenAI } = require("@google/genai");
+// ✅ USE THE CORRECT FREE SDK
+const { GoogleGenerativeAI } = require("@google/generative-ai");
 const fs = require('fs');
 const pdf = require('pdf-parse');
 
-// Initialize Gemini
-const apiKey = process.env.GEMINI_API_KEY || process.env.API_KEY;
-const ai = apiKey ? new GoogleGenAI({ apiKey }) : null;
+// Initialize Gemini correctly
+const apiKey = process.env.GEMINI_API_KEY;
+const ai = new GoogleGenerativeAI(apiKey);
 
-// Helper to extract text
+// FREE MODEL
+const MODEL = "gemini-1.5-flash";
+
+// Extract text
 async function extractText(filePath, mimeType) {
   try {
-    if (mimeType === 'application/pdf') {
+    if (mimeType === "application/pdf") {
       const dataBuffer = fs.readFileSync(filePath);
       const data = await pdf(dataBuffer);
       return data.text;
-    } else {
-      return fs.readFileSync(filePath, 'utf8');
     }
-  } catch (error) {
-    console.error("Extraction error:", error);
+    return fs.readFileSync(filePath, "utf8");
+  } catch (err) {
+    console.error("Text extraction error:", err);
     return "";
   }
 }
 
-// Helper to clean JSON
+// JSON cleaner
 function cleanJSON(text) {
   try {
-    const start = text.indexOf('{');
-    const end = text.lastIndexOf('}');
+    const start = text.indexOf("{");
+    const end = text.lastIndexOf("}");
     if (start === -1 || end === -1) return {};
     return JSON.parse(text.substring(start, end + 1));
-  } catch (e) {
-    console.error("JSON Parse Error", e);
+  } catch {
     return {};
   }
 }
 
 function cleanJSONArray(text) {
   try {
-    const start = text.indexOf('[');
-    const end = text.lastIndexOf(']');
+    const start = text.indexOf("[");
+    const end = text.lastIndexOf("]");
     if (start === -1 || end === -1) return [];
     return JSON.parse(text.substring(start, end + 1));
-  } catch (e) {
-    console.error("JSON Array Parse Error", e);
+  } catch {
     return [];
   }
 }
 
-// 1. Ingestion (Enhanced with Image Analysis)
+// =========================================================
+// 1. PROCESS FILES
+// =========================================================
+
 exports.processFiles = async (req, res) => {
   try {
-    if (!ai) throw new Error("API Key not configured");
     const files = req.files || [];
     const results = [];
 
     for (const file of files) {
-      let analysisResult = {};
-      let contentPreview = "";
+      const model = ai.getGenerativeModel({ model: MODEL });
 
-      if (file.mimetype.startsWith('image/')) {
-        // IMAGE ANALYSIS: Use gemini-3-pro-preview
-        const imageBuffer = fs.readFileSync(file.path);
-        const base64Image = imageBuffer.toString('base64');
-        
-        const prompt = `
-          Analyze this educational image. Describe the diagrams, text, or visual concepts in detail.
-          Return strict JSON (no markdown):
-          {
-            "summary": "Detailed visual description (max 100 words)",
-            "topics": ["Visual Topic 1", "Visual Topic 2"],
-            "difficulty": number (1-10),
-            "credibilityScore": 80,
-            "type": "Image/Diagram",
-            "warnings": []
-          }
-        `;
+      let content = await extractText(file.path, file.mimetype);
 
-        try {
-          const response = await ai.models.generateContent({
-            model: 'gemini-3-pro-preview',
-            contents: {
-              parts: [
-                { inlineData: { mimeType: file.mimetype, data: base64Image } },
-                { text: prompt }
-              ]
-            },
-            config: { responseMimeType: 'application/json' }
-          });
-          analysisResult = cleanJSON(response.text);
-          contentPreview = `[Image Analysis] ${analysisResult.summary}`;
-        } catch (e) {
-          console.error("Image Analysis Error", e);
-          analysisResult = { summary: "Image analysis failed", topics: ["Image"], difficulty: 5, credibilityScore: 50, type: "Image", warnings: ["Analysis failed"] };
+      const prompt = `
+        Analyze this educational content:
+        ${content.slice(0, 7000)}
+
+        Return JSON:
+        {
+          "summary": "",
+          "topics": [],
+          "difficulty": 1,
+          "credibilityScore": 80,
+          "type": "text",
+          "warnings": []
         }
+      `;
 
-      } else {
-        // TEXT/PDF ANALYSIS: Use gemini-2.5-flash
-        contentPreview = await extractText(file.path, file.mimetype);
-        const prompt = `
-          Analyze this educational resource.
-          Filename: ${file.originalname}
-          Content Snippet: ${contentPreview.slice(0, 8000)}...
-
-          Return strict JSON (no markdown) with:
-          {
-            "summary": "string (max 100 words)",
-            "topics": ["string"],
-            "difficulty": number (1-10),
-            "credibilityScore": number (1-100),
-            "type": "string",
-            "warnings": ["string"]
-          }
-        `;
-
-        const response = await ai.models.generateContent({
-          model: 'gemini-2.5-flash',
-          contents: prompt,
-          config: { responseMimeType: 'application/json' }
-        });
-        analysisResult = cleanJSON(response.text);
-      }
+      const result = await model.generateContent(prompt);
+      const text = await result.text();
+      const json = cleanJSON(text);
 
       results.push({
         id: file.filename,
         name: file.originalname,
-        type: file.mimetype.startsWith('image/') ? 'image' : (file.mimetype === 'application/pdf' ? 'pdf' : 'text'),
-        content: contentPreview,
-        metadata: analysisResult,
-        uploadedAt: new Date().toISOString()
+        type: file.mimetype,
+        content,
+        metadata: json,
+        uploadedAt: new Date()
       });
 
-      try { fs.unlinkSync(file.path); } catch (e) {}
+      try { fs.unlinkSync(file.path); } catch {}
     }
+
     res.json({ resources: results });
-  } catch (error) {
-    console.error("Process Files Error:", error);
-    res.status(500).json({ error: error.message });
+
+  } catch (err) {
+    console.error("ProcessFiles Error:", err);
+    res.status(500).json({ error: err.message });
   }
 };
 
+// =========================================================
+// 2. URL PROCESSOR
+// =========================================================
+
 exports.processUrl = async (req, res) => {
   try {
-    if (!ai) throw new Error("API Key not configured");
     const { url } = req.body;
+    const model = ai.getGenerativeModel({ model: MODEL });
+
     const prompt = `
-      Analyze this URL: ${url}.
-      Infer educational content.
-      Return strict JSON: { "summary": "", "topics": [], "difficulty": 5, "credibilityScore": 80, "type": "url", "warnings": [] }
+      Analyze this URL: ${url}
+      Return JSON: {
+        "summary": "",
+        "topics": [],
+        "difficulty": 5,
+        "credibilityScore": 80,
+        "type": "url",
+        "warnings": []
+      }
     `;
 
-    const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash',
-      contents: prompt,
-      config: { responseMimeType: 'application/json' }
-    });
-    
+    const result = await model.generateContent(prompt);
+    const output = cleanJSON(await result.text());
+
     res.json({
       resource: {
         id: Date.now().toString(),
         name: url,
-        type: 'url',
         url,
-        content: `External Link: ${url}`,
-        metadata: cleanJSON(response.text),
-        uploadedAt: new Date().toISOString()
+        type: "url",
+        metadata: output,
+        uploadedAt: new Date()
       }
     });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
+
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 };
+
+// =========================================================
+// 3. CURRICULUM HARMONIZER
+// =========================================================
 
 exports.harmonizeCurriculum = async (req, res) => {
   try {
-    if (!ai) throw new Error("API Key not configured");
-    const { resources } = req.body;
-    const summaries = resources.map(r => 
-      `ID: ${r.id}, Name: ${r.name}, Topics: ${r.metadata?.topics?.join(', ')}`
-    ).join('\n');
+    const model = ai.getGenerativeModel({ model: MODEL });
 
     const prompt = `
-      Act as a Curriculum Architect. Create a dependency tree.
-      Input: ${summaries}
-      Output strict JSON Array:
-      [{ "id": "uuid", "title": "string", "description": "string", "resources": ["resource_id"], "prerequisites": ["node_id"], "duration": "string" }]
+      Build a dependency tree for these resources:
+      ${JSON.stringify(req.body.resources)}
+
+      Return JSON Array:
+      [{
+        "id": "",
+        "title": "",
+        "description": "",
+        "resources": [],
+        "prerequisites": []
+      }]
     `;
 
-    const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash',
-      contents: prompt,
-      config: { responseMimeType: 'application/json' }
-    });
-    res.json(cleanJSONArray(response.text));
-  } catch (error) {
-    res.status(500).json({ error: error.message });
+    const result = await model.generateContent(prompt);
+    const json = cleanJSONArray(await result.text());
+
+    res.json(json);
+
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 };
 
-// 2. Planning (Enhanced with Thinking Mode)
+// =========================================================
+// 4. STUDY PLAN (must NOT use gemini-3-pro)
+// =========================================================
+
 exports.generateStudyPlan = async (req, res) => {
   try {
-    if (!ai) throw new Error("API Key not configured");
-    const { nodes } = req.body;
-    
-    if (!nodes || nodes.length === 0) return res.status(400).json({ error: "No curriculum nodes" });
+    const model = ai.getGenerativeModel({ model: MODEL });
 
     const prompt = `
-      Create a comprehensive 3-Year Study Plan for these topics: ${JSON.stringify(nodes)}.
-      The plan must be logically sequenced and balanced.
-      Output strictly JSON:
-      { "years": [{ "year": 1, "focus": "", "quarters": [{ "quarter": 1, "focus": "", "months": [{ "month": 1, "topics": [ { "id": "node_id", "title": "" } ] }] }] }] }
+      Create a structured 3-year study plan.
+      Topics: ${JSON.stringify(req.body.nodes)}
+
+      Return JSON:
+      { "years": [] }
     `;
 
-    // THINKING MODE: Use gemini-3-pro-preview with thinkingBudget
-    const response = await ai.models.generateContent({
-      model: 'gemini-3-pro-preview',
-      contents: prompt,
-      config: { 
-        responseMimeType: 'application/json',
-        thinkingConfig: { thinkingBudget: 32768 } // Max reasoning for complex planning
-      }
-    });
-    res.json(cleanJSON(response.text));
-  } catch (error) {
-    console.error("Study Plan Error:", error);
-    res.status(500).json({ error: error.message });
+    const result = await model.generateContent(prompt);
+    res.json(cleanJSON(await result.text()));
+
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 };
+
+// =========================================================
+// 5. MASTER NOTES
+// =========================================================
 
 exports.generateMasterNotes = async (req, res) => {
   try {
-    if (!ai) throw new Error("API Key not configured");
     const { topic, resources } = req.body;
+    const model = ai.getGenerativeModel({ model: MODEL });
+
     const context = resources
-      .filter(r => topic.resources && topic.resources.includes(r.id))
-      .map(r => `Source (${r.name}):\n${r.content.substring(0, 4000)}`)
-      .join('\n\n');
+      .map(r => `[${r.name}]: ${r.content.slice(0, 3000)}`)
+      .join("\n");
 
-    const prompt = `Write a comprehensive Master Note (Markdown) for "${topic.title}" using sources:\n${context}`;
+    const prompt = `
+      Create detailed Markdown master notes for topic "${topic.title}"
+      using the following context:
 
-    const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash',
-      contents: prompt
-    });
+      ${context}
+    `;
+
+    const result = await model.generateContent(prompt);
 
     res.json({
       topicId: topic.id,
       title: topic.title,
-      contentMarkdown: response.text,
-      generatedAt: new Date().toISOString(),
-      references: resources.map(r => ({ resourceId: r.id, snippet: r.name }))
+      contentMarkdown: await result.text(),
+      generatedAt: new Date()
     });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
+
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 };
+
+// =========================================================
+// 6. QUIZ GENERATOR
+// =========================================================
 
 exports.generateQuiz = async (req, res) => {
   try {
-    const { topic } = req.body;
-    const prompt = `Generate 5 multiple choice questions for "${topic}". JSON Array output.`;
-    const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash',
-      contents: prompt,
-      config: { responseMimeType: 'application/json' }
-    });
-    res.json(cleanJSONArray(response.text));
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-};
+    const model = ai.getGenerativeModel({ model: MODEL });
 
-// 3. Chatbot (gemini-3-pro-preview)
-exports.chat = async (req, res) => {
-  try {
-    if (!ai) throw new Error("API Key not configured");
-    const { message, history } = req.body;
-    
-    // Construct history for context
-    const chat = ai.chats.create({
-      model: 'gemini-3-pro-preview',
-      history: history || []
-    });
+    const prompt = `
+      Generate 5 MCQs for topic: "${req.body.topic}"
+      Return JSON Array.
+    `;
 
-    const result = await chat.sendMessage(message);
-    res.json({ text: result.text });
-  } catch (error) {
-    console.error("Chat Error:", error);
-    res.status(500).json({ error: error.message });
-  }
-};
+    const result = await model.generateContent(prompt);
+    res.json(cleanJSONArray(await result.text()));
 
-// 4. Research / Search Grounding (gemini-2.5-flash + googleSearch)
-exports.research = async (req, res) => {
-  try {
-    if (!ai) throw new Error("API Key not configured");
-    const { query } = req.body;
-    
-    const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash',
-      contents: `Research this topic and provide a summary with sources: ${query}`,
-      config: {
-        tools: [{ googleSearch: {} }] // Enable Google Search Grounding
-      }
-    });
-
-    const groundingChunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks || [];
-    
-    res.json({ 
-      text: response.text, 
-      sources: groundingChunks.map(chunk => chunk.web).filter(web => web) // Extract web sources
-    });
-  } catch (error) {
-    console.error("Research Error:", error);
-    res.status(500).json({ error: error.message });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 };
