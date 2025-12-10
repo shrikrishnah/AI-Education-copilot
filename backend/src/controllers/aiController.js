@@ -1,12 +1,12 @@
 const fs = require("fs");
 const pdf = require("pdf-parse");
-const { GoogleGenerativeAI } = require("@google/generative-ai");
+const { GoogleGenAI } = require("@google/genai");
 
 // Load API Key
 const apiKey = process.env.GEMINI_API_KEY || process.env.API_KEY;
 if (!apiKey) console.error("❌ ERROR: Missing GEMINI_API_KEY");
 
-const genAI = new GoogleGenerativeAI(apiKey);
+const ai = new GoogleGenAI({ apiKey });
 
 // =========================
 // Helpers
@@ -30,6 +30,7 @@ async function extractText(filePath, mimeType) {
 // Clean JSON from AI messy text
 function cleanJSON(text) {
   try {
+    if (!text) return {};
     // Remove markdown code blocks if present
     let clean = text.replace(/```json/g, '').replace(/```/g, '');
     // Find the first '{' and last '}'
@@ -45,6 +46,7 @@ function cleanJSON(text) {
 
 function cleanJSONArray(text) {
   try {
+    if (!text) return [];
     let clean = text.replace(/```json/g, '').replace(/```/g, '');
     const start = clean.indexOf('[');
     const end = clean.lastIndexOf(']');
@@ -64,8 +66,6 @@ exports.processFiles = async (req, res) => {
   try {
     const files = req.files || [];
     const responses = [];
-    // Using gemini-2.0-flash as it is valid and stable
-    const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
 
     for (const file of files) {
       const text = await extractText(file.path, file.mimetype);
@@ -88,9 +88,13 @@ Return JSON like:
 `;
 
       try {
-        const result = await model.generateContent(prompt);
-        const aiResponse = result.response.text();
-        const metadata = cleanJSON(aiResponse);
+        const result = await ai.models.generateContent({
+          model: 'gemini-2.5-flash',
+          contents: prompt,
+          config: { responseMimeType: 'application/json' }
+        });
+        
+        const metadata = cleanJSON(result.text);
 
         responses.push({
           id: file.filename,
@@ -123,7 +127,6 @@ Return JSON like:
 exports.processUrl = async (req, res) => {
   try {
     const { url } = req.body;
-    const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
 
     const prompt = `
 Analyze this URL: ${url}
@@ -139,8 +142,13 @@ Return only JSON:
 }
 `;
 
-    const result = await model.generateContent(prompt);
-    const metadata = cleanJSON(result.response.text());
+    const result = await ai.models.generateContent({
+      model: 'gemini-2.5-flash',
+      contents: prompt,
+      config: { responseMimeType: 'application/json' }
+    });
+    
+    const metadata = cleanJSON(result.text);
 
     res.json({
       resource: {
@@ -167,8 +175,6 @@ Return only JSON:
 exports.harmonizeCurriculum = async (req, res) => {
   try {
     const { resources } = req.body;
-    // Switch to gemini-2.0-flash to avoid 404 on gemini-2.0-pro
-    const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
 
     const summary = resources
       .map(r => `${r.id} - ${r.name}: ${r.metadata?.topics?.join(", ")}`)
@@ -192,8 +198,13 @@ Return an array of JSON objects ONLY:
 ]
 `;
 
-    const result = await model.generateContent(prompt);
-    res.json(cleanJSONArray(result.response.text()));
+    const result = await ai.models.generateContent({
+      model: 'gemini-3-pro-preview',
+      contents: prompt,
+      config: { responseMimeType: 'application/json' }
+    });
+    
+    res.json(cleanJSONArray(result.text));
 
   } catch (err) {
     console.error("❌ Harmonize Error:", err);
@@ -208,8 +219,6 @@ Return an array of JSON objects ONLY:
 exports.generateStudyPlan = async (req, res) => {
   try {
     const { nodes } = req.body;
-    // Switch to gemini-2.0-flash to avoid 404
-    const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
 
     const prompt = `
 Create a structured 3-year study plan based on topics:
@@ -236,8 +245,13 @@ Return JSON ONLY:
 }
 `;
 
-    const result = await model.generateContent(prompt);
-    res.json(cleanJSON(result.response.text()));
+    const result = await ai.models.generateContent({
+      model: 'gemini-3-pro-preview',
+      contents: prompt,
+      config: { responseMimeType: 'application/json' }
+    });
+    
+    res.json(cleanJSON(result.text));
 
   } catch (err) {
     console.error("❌ Study Plan Error:", err);
@@ -252,8 +266,6 @@ Return JSON ONLY:
 exports.generateMasterNotes = async (req, res) => {
   try {
     const { topic, resources } = req.body;
-    // Switch to gemini-2.0-flash to avoid 404
-    const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
 
     const context = resources
       .filter(r => topic.resources?.includes(r.id))
@@ -269,12 +281,15 @@ ${context}
 Return clean Markdown only.
 `;
 
-    const result = await model.generateContent(prompt);
+    const result = await ai.models.generateContent({
+      model: 'gemini-3-pro-preview',
+      contents: prompt
+    });
 
     res.json({
       topicId: topic.id,
       title: topic.title,
-      contentMarkdown: result.response.text(),
+      contentMarkdown: result.text,
       generatedAt: new Date().toISOString(),
       references: resources.map(r => ({ id: r.id, name: r.name })),
     });
@@ -292,7 +307,6 @@ Return clean Markdown only.
 exports.generateQuiz = async (req, res) => {
   try {
     const { topic } = req.body;
-    const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
 
     const prompt = `
 Generate 5 MCQ questions for topic: "${topic}"
@@ -309,8 +323,13 @@ Return JSON ONLY:
 ]
 `;
 
-    const result = await model.generateContent(prompt);
-    res.json(cleanJSONArray(result.response.text()));
+    const result = await ai.models.generateContent({
+      model: 'gemini-2.5-flash',
+      contents: prompt,
+      config: { responseMimeType: 'application/json' }
+    });
+    
+    res.json(cleanJSONArray(result.text));
 
   } catch (err) {
     console.error("❌ Quiz Error:", err);
@@ -324,18 +343,26 @@ Return JSON ONLY:
 
 exports.chat = async (req, res) => {
   try {
-    const { message } = req.body;
-    // Switch to gemini-2.0-flash to avoid 404
-    const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
+    const { message, history } = req.body;
 
+    // Convert simple history to context string or proper format if supported
+    // For simplicity in this controller, appending previous context as text
+    const context = history ? history.map(h => `${h.role}: ${h.parts[0].text}`).join('\n') : '';
+    
     const prompt = `
-You are an AI education assistant. Respond to:
+You are an AI education assistant. 
+Previous conversation:
+${context}
 
 User: ${message}
 `;
 
-    const result = await model.generateContent(prompt);
-    res.json({ text: result.response.text() });
+    const result = await ai.models.generateContent({
+      model: 'gemini-3-pro-preview',
+      contents: prompt
+    });
+    
+    res.json({ text: result.text });
 
   } catch (err) {
     console.error("❌ Chat Error:", err);
@@ -350,18 +377,24 @@ User: ${message}
 exports.research = async (req, res) => {
   try {
     const { query } = req.body;
-    const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
 
-    const prompt = `
-Research the topic: ${query}
-Provide a structured summary.
-`;
+    const result = await ai.models.generateContent({
+      model: 'gemini-2.5-flash',
+      contents: `Research the topic: ${query}`,
+      config: {
+        tools: [{ googleSearch: {} }]
+      }
+    });
 
-    const result = await model.generateContent(prompt);
+    const groundingChunks = result.candidates?.[0]?.groundingMetadata?.groundingChunks || [];
+    const sources = groundingChunks
+      .map(chunk => chunk.web)
+      .filter(web => web) // Filter out nulls
+      .map(web => ({ uri: web.uri, title: web.title }));
 
     res.json({
-      text: result.response.text(),
-      sources: [] 
+      text: result.text,
+      sources: sources
     });
 
   } catch (err) {
