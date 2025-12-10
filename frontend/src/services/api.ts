@@ -1,9 +1,15 @@
-/// <reference types="vite/client" />
 import axios from 'axios';
-import { Resource, CurriculumNode, StudyPlan, MasterNote, QuizQuestion } from '../types';
+import { Resource, CurriculumNode, StudyPlan, MasterNote, QuizQuestion, ChatMessage, ResearchResult } from '../types';
 
-// Use relative path '/api' to leverage Vite's proxy in development.
-// In production, this can be replaced by the full URL env var.
+declare global {
+  interface ImportMeta {
+    env: {
+      VITE_API_URL?: string;
+      [key: string]: any;
+    };
+  }
+}
+
 const API_BASE = import.meta.env.VITE_API_URL || '/api';
 
 const client = axios.create({
@@ -47,6 +53,17 @@ export const api = {
 
   generateQuiz: async (topicTitle: string) => {
     const response = await client.post<QuizQuestion[]>('/quiz', { topic: topicTitle });
+    return response.data;
+  },
+
+  // New Features
+  chat: async (message: string, history: ChatMessage[]) => {
+    const response = await client.post<{ text: string }>('/chat', { message, history });
+    return response.data;
+  },
+
+  research: async (query: string) => {
+    const response = await client.post<ResearchResult>('/research', { query });
     return response.data;
   }
 };

@@ -1,7 +1,7 @@
 export interface Resource {
   id: string;
   name: string;
-  type: 'pdf' | 'text' | 'url';
+  type: 'pdf' | 'text' | 'url' | 'image';
   content: string;
   url?: string;
   uploadedAt: string;
@@ -59,6 +59,16 @@ export interface QuizQuestion {
   options: string[];
   correctIndex: number;
   explanation: string;
+}
+
+export interface ChatMessage {
+  role: 'user' | 'model';
+  parts: { text: string }[];
+}
+
+export interface ResearchResult {
+  text: string;
+  sources: { uri: string; title: string }[];
 }
 
 export interface AppState {

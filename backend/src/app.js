@@ -7,11 +7,14 @@ const apiRoutes = require('./routes/api');
 const app = express();
 
 // Middleware
+// Updated CORS to allow all origins (*) and removed credentials: true 
+// which conflicts with origin: *
 app.use(cors({
-  origin: process.env.FRONTEND_URL || '*', 
-  methods: ['GET', 'POST', 'PUT', 'DELETE'],
-  credentials: true
+  origin: '*', 
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization']
 }));
+
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 

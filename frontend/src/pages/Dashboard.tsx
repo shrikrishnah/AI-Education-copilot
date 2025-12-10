@@ -1,6 +1,6 @@
 import React from 'react';
 import { AppState, Resource } from '../types';
-import { FileText, Award, AlertTriangle, CheckCircle } from 'lucide-react';
+import { FileText, Award, AlertTriangle, CheckCircle, Image, Globe, Link } from 'lucide-react';
 
 interface DashboardProps {
   state: AppState;
@@ -27,9 +27,16 @@ export const Dashboard: React.FC<DashboardProps> = ({ state, onNavigate }) => {
         <h3 className="text-xl font-semibold text-white mb-4">Resources</h3>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {state.resources.map(r => (
-            <div key={r.id} className="glass-panel p-5 rounded-xl">
-              <h4 className="font-semibold text-white truncate">{r.name}</h4>
-              <p className="text-sm text-slate-400 line-clamp-2">{r.metadata?.summary || 'Processing...'}</p>
+            <div key={r.id} className="glass-panel p-5 rounded-xl border-t-2 border-t-slate-700">
+              <div className="flex justify-between items-start mb-2">
+                <div className="flex items-center gap-2 text-xs font-semibold uppercase text-slate-500">
+                  {r.type === 'image' ? <Image size={14} /> : r.type === 'url' ? <Globe size={14} /> : <FileText size={14} />}
+                  {r.type}
+                </div>
+                {r.metadata && <span className="text-xs text-green-400">Score: {r.metadata.credibilityScore}</span>}
+              </div>
+              <h4 className="font-semibold text-white truncate mb-1" title={r.name}>{r.name}</h4>
+              <p className="text-sm text-slate-400 line-clamp-3 leading-relaxed">{r.metadata?.summary || 'Processing...'}</p>
             </div>
           ))}
         </div>

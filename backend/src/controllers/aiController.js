@@ -2,8 +2,7 @@ const { GoogleGenAI } = require("@google/genai");
 const fs = require('fs');
 const pdf = require('pdf-parse');
 
-// Initialize Gemini with the new SDK
-// Use process.env.GEMINI_API_KEY or fallback to API_KEY
+// Initialize Gemini
 const apiKey = process.env.GEMINI_API_KEY || process.env.API_KEY;
 const ai = apiKey ? new GoogleGenAI({ apiKey }) : null;
 
@@ -23,7 +22,7 @@ async function extractText(filePath, mimeType) {
   }
 }
 
-// Helpers to clean JSON output from model
+// Helper to clean JSON
 function cleanJSON(text) {
   try {
     const start = text.indexOf('{');
@@ -48,6 +47,7 @@ function cleanJSONArray(text) {
   }
 }
 
+// 1. Ingestion (Enhanced with Image Analysis)
 exports.processFiles = async (req, res) => {
   try {
     if (!ai) throw new Error("API Key not configured");
@@ -55,50 +55,86 @@ exports.processFiles = async (req, res) => {
     const results = [];
 
     for (const file of files) {
-      const textContent = await extractText(file.path, file.mimetype);
-      
-      const prompt = `
-        Analyze this educational resource.
-        Filename: ${file.originalname}
-        Content Snippet: ${textContent.slice(0, 8000)}...
+      let analysisResult = {};
+      let contentPreview = "";
 
-        Return strict JSON (no markdown) with:
-        {
-          "summary": "string (max 100 words)",
-          "topics": ["string"],
-          "difficulty": number (1-10),
-          "credibilityScore": number (1-100),
-          "type": "string",
-          "warnings": ["string"]
+      if (file.mimetype.startsWith('image/')) {
+        // IMAGE ANALYSIS: Use gemini-3-pro-preview
+        const imageBuffer = fs.readFileSync(file.path);
+        const base64Image = imageBuffer.toString('base64');
+        
+        const prompt = `
+          Analyze this educational image. Describe the diagrams, text, or visual concepts in detail.
+          Return strict JSON (no markdown):
+          {
+            "summary": "Detailed visual description (max 100 words)",
+            "topics": ["Visual Topic 1", "Visual Topic 2"],
+            "difficulty": number (1-10),
+            "credibilityScore": 80,
+            "type": "Image/Diagram",
+            "warnings": []
+          }
+        `;
+
+        try {
+          const response = await ai.models.generateContent({
+            model: 'gemini-3-pro-preview',
+            contents: {
+              parts: [
+                { inlineData: { mimeType: file.mimetype, data: base64Image } },
+                { text: prompt }
+              ]
+            },
+            config: { responseMimeType: 'application/json' }
+          });
+          analysisResult = cleanJSON(response.text);
+          contentPreview = `[Image Analysis] ${analysisResult.summary}`;
+        } catch (e) {
+          console.error("Image Analysis Error", e);
+          analysisResult = { summary: "Image analysis failed", topics: ["Image"], difficulty: 5, credibilityScore: 50, type: "Image", warnings: ["Analysis failed"] };
         }
-      `;
 
-      try {
+      } else {
+        // TEXT/PDF ANALYSIS: Use gemini-2.5-flash
+        contentPreview = await extractText(file.path, file.mimetype);
+        const prompt = `
+          Analyze this educational resource.
+          Filename: ${file.originalname}
+          Content Snippet: ${contentPreview.slice(0, 8000)}...
+
+          Return strict JSON (no markdown) with:
+          {
+            "summary": "string (max 100 words)",
+            "topics": ["string"],
+            "difficulty": number (1-10),
+            "credibilityScore": number (1-100),
+            "type": "string",
+            "warnings": ["string"]
+          }
+        `;
+
         const response = await ai.models.generateContent({
           model: 'gemini-2.5-flash',
           contents: prompt,
           config: { responseMimeType: 'application/json' }
         });
-        
-        const metadata = cleanJSON(response.text);
-
-        results.push({
-          id: file.filename,
-          name: file.originalname,
-          type: file.mimetype === 'application/pdf' ? 'pdf' : 'text',
-          content: textContent,
-          metadata,
-          uploadedAt: new Date().toISOString()
-        });
-      } catch (err) {
-        console.error(`AI Error for ${file.originalname}:`, err);
-        results.push({ id: file.filename, name: file.originalname, status: 'error', error: err.message });
-      } finally {
-        try { fs.unlinkSync(file.path); } catch (e) {}
+        analysisResult = cleanJSON(response.text);
       }
+
+      results.push({
+        id: file.filename,
+        name: file.originalname,
+        type: file.mimetype.startsWith('image/') ? 'image' : (file.mimetype === 'application/pdf' ? 'pdf' : 'text'),
+        content: contentPreview,
+        metadata: analysisResult,
+        uploadedAt: new Date().toISOString()
+      });
+
+      try { fs.unlinkSync(file.path); } catch (e) {}
     }
     res.json({ resources: results });
   } catch (error) {
+    console.error("Process Files Error:", error);
     res.status(500).json({ error: error.message });
   }
 };
@@ -109,7 +145,7 @@ exports.processUrl = async (req, res) => {
     const { url } = req.body;
     const prompt = `
       Analyze this URL: ${url}.
-      Infer educational content, topics, and metadata based on the URL structure.
+      Infer educational content.
       Return strict JSON: { "summary": "", "topics": [], "difficulty": 5, "credibilityScore": 80, "type": "url", "warnings": [] }
     `;
 
@@ -118,7 +154,6 @@ exports.processUrl = async (req, res) => {
       contents: prompt,
       config: { responseMimeType: 'application/json' }
     });
-    const metadata = cleanJSON(response.text);
     
     res.json({
       resource: {
@@ -127,7 +162,7 @@ exports.processUrl = async (req, res) => {
         type: 'url',
         url,
         content: `External Link: ${url}`,
-        metadata,
+        metadata: cleanJSON(response.text),
         uploadedAt: new Date().toISOString()
       }
     });
@@ -145,10 +180,8 @@ exports.harmonizeCurriculum = async (req, res) => {
     ).join('\n');
 
     const prompt = `
-      Act as a Curriculum Architect. Create a dependency tree of "Curriculum Nodes".
-      Input:
-      ${summaries}
-
+      Act as a Curriculum Architect. Create a dependency tree.
+      Input: ${summaries}
       Output strict JSON Array:
       [{ "id": "uuid", "title": "string", "description": "string", "resources": ["resource_id"], "prerequisites": ["node_id"], "duration": "string" }]
     `;
@@ -164,23 +197,33 @@ exports.harmonizeCurriculum = async (req, res) => {
   }
 };
 
+// 2. Planning (Enhanced with Thinking Mode)
 exports.generateStudyPlan = async (req, res) => {
   try {
     if (!ai) throw new Error("API Key not configured");
     const { nodes } = req.body;
+    
+    if (!nodes || nodes.length === 0) return res.status(400).json({ error: "No curriculum nodes" });
+
     const prompt = `
-      Create a 3-Year Study Plan for these topics: ${JSON.stringify(nodes)}.
-      Output strictly JSON matching this schema:
+      Create a comprehensive 3-Year Study Plan for these topics: ${JSON.stringify(nodes)}.
+      The plan must be logically sequenced and balanced.
+      Output strictly JSON:
       { "years": [{ "year": 1, "focus": "", "quarters": [{ "quarter": 1, "focus": "", "months": [{ "month": 1, "topics": [ { "id": "node_id", "title": "" } ] }] }] }] }
     `;
 
+    // THINKING MODE: Use gemini-3-pro-preview with thinkingBudget
     const response = await ai.models.generateContent({
       model: 'gemini-3-pro-preview',
       contents: prompt,
-      config: { responseMimeType: 'application/json' }
+      config: { 
+        responseMimeType: 'application/json',
+        thinkingConfig: { thinkingBudget: 32768 } // Max reasoning for complex planning
+      }
     });
     res.json(cleanJSON(response.text));
   } catch (error) {
+    console.error("Study Plan Error:", error);
     res.status(500).json({ error: error.message });
   }
 };
@@ -194,16 +237,10 @@ exports.generateMasterNotes = async (req, res) => {
       .map(r => `Source (${r.name}):\n${r.content.substring(0, 4000)}`)
       .join('\n\n');
 
-    const prompt = `
-      Write a comprehensive "Master Note" (Markdown) for topic: "${topic.title}".
-      Use these sources. Include Overview, Deep Dive, and Key Takeaways.
-      
-      Sources:
-      ${context}
-    `;
+    const prompt = `Write a comprehensive Master Note (Markdown) for "${topic.title}" using sources:\n${context}`;
 
     const response = await ai.models.generateContent({
-      model: 'gemini-3-pro-preview',
+      model: 'gemini-2.5-flash',
       contents: prompt
     });
 
@@ -221,12 +258,8 @@ exports.generateMasterNotes = async (req, res) => {
 
 exports.generateQuiz = async (req, res) => {
   try {
-    if (!ai) throw new Error("API Key not configured");
     const { topic } = req.body;
-    const prompt = `Generate 5 multiple choice questions for "${topic}". 
-    Return strict JSON Array:
-    [{ "id": "1", "question": "", "options": ["A", "B", "C", "D"], "correctIndex": 0, "explanation": "" }]`;
-
+    const prompt = `Generate 5 multiple choice questions for "${topic}". JSON Array output.`;
     const response = await ai.models.generateContent({
       model: 'gemini-2.5-flash',
       contents: prompt,
@@ -234,6 +267,52 @@ exports.generateQuiz = async (req, res) => {
     });
     res.json(cleanJSONArray(response.text));
   } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+};
+
+// 3. Chatbot (gemini-3-pro-preview)
+exports.chat = async (req, res) => {
+  try {
+    if (!ai) throw new Error("API Key not configured");
+    const { message, history } = req.body;
+    
+    // Construct history for context
+    const chat = ai.chats.create({
+      model: 'gemini-3-pro-preview',
+      history: history || []
+    });
+
+    const result = await chat.sendMessage(message);
+    res.json({ text: result.text });
+  } catch (error) {
+    console.error("Chat Error:", error);
+    res.status(500).json({ error: error.message });
+  }
+};
+
+// 4. Research / Search Grounding (gemini-2.5-flash + googleSearch)
+exports.research = async (req, res) => {
+  try {
+    if (!ai) throw new Error("API Key not configured");
+    const { query } = req.body;
+    
+    const response = await ai.models.generateContent({
+      model: 'gemini-2.5-flash',
+      contents: `Research this topic and provide a summary with sources: ${query}`,
+      config: {
+        tools: [{ googleSearch: {} }] // Enable Google Search Grounding
+      }
+    });
+
+    const groundingChunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks || [];
+    
+    res.json({ 
+      text: response.text, 
+      sources: groundingChunks.map(chunk => chunk.web).filter(web => web) // Extract web sources
+    });
+  } catch (error) {
+    console.error("Research Error:", error);
     res.status(500).json({ error: error.message });
   }
 };

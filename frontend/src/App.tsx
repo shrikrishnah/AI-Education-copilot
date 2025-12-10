@@ -5,10 +5,12 @@ import { Upload } from './pages/Upload';
 import { Planner } from './pages/Planner';
 import { Notes } from './pages/Notes';
 import { Quiz } from './pages/Quiz';
+import { Chat } from './pages/Chat';
+import { Research } from './pages/Research';
 import { AppState } from './types';
 import { api } from './services/api';
 
-type View = 'dashboard' | 'upload' | 'planner' | 'notes' | 'quiz';
+type View = 'dashboard' | 'upload' | 'planner' | 'notes' | 'quiz' | 'chat' | 'research';
 
 function App() {
   const [view, setView] = useState<View>('dashboard');
@@ -103,6 +105,8 @@ function App() {
       case 'planner': return <Planner plan={state.studyPlan} onGenerate={generateCurriculum} loading={loading} hasResources={state.resources.length > 0} />;
       case 'notes': return <Notes curriculum={state.curriculum} notes={state.masterNotes} onGenerate={generateNote} loading={loading} />;
       case 'quiz': return <Quiz curriculum={state.curriculum} />;
+      case 'chat': return <Chat />;
+      case 'research': return <Research />;
       default: return <Dashboard state={state} onNavigate={setView} />;
     }
   };
