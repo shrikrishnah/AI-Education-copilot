@@ -64,6 +64,7 @@ exports.processFiles = async (req, res) => {
   try {
     const files = req.files || [];
     const responses = [];
+    // Using gemini-2.0-flash as it is valid and stable
     const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
 
     for (const file of files) {
@@ -166,7 +167,8 @@ Return only JSON:
 exports.harmonizeCurriculum = async (req, res) => {
   try {
     const { resources } = req.body;
-    const model = genAI.getGenerativeModel({ model: "gemini-2.0-pro" });
+    // Switch to gemini-2.0-flash to avoid 404 on gemini-2.0-pro
+    const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
 
     const summary = resources
       .map(r => `${r.id} - ${r.name}: ${r.metadata?.topics?.join(", ")}`)
@@ -206,7 +208,8 @@ Return an array of JSON objects ONLY:
 exports.generateStudyPlan = async (req, res) => {
   try {
     const { nodes } = req.body;
-    const model = genAI.getGenerativeModel({ model: "gemini-2.0-pro" });
+    // Switch to gemini-2.0-flash to avoid 404
+    const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
 
     const prompt = `
 Create a structured 3-year study plan based on topics:
@@ -249,7 +252,8 @@ Return JSON ONLY:
 exports.generateMasterNotes = async (req, res) => {
   try {
     const { topic, resources } = req.body;
-    const model = genAI.getGenerativeModel({ model: "gemini-2.0-pro" });
+    // Switch to gemini-2.0-flash to avoid 404
+    const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
 
     const context = resources
       .filter(r => topic.resources?.includes(r.id))
@@ -321,7 +325,8 @@ Return JSON ONLY:
 exports.chat = async (req, res) => {
   try {
     const { message } = req.body;
-    const model = genAI.getGenerativeModel({ model: "gemini-2.0-pro" });
+    // Switch to gemini-2.0-flash to avoid 404
+    const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
 
     const prompt = `
 You are an AI education assistant. Respond to:
